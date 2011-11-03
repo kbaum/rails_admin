@@ -611,25 +611,25 @@ describe "RailsAdmin Config DSL Edit Section" do
 
     it "should be required" do
       # draft.notes is nullable and has no validation
-      field = RailsAdmin::config("Draft").edit.fields.find{|f| f.name == :notes}
+      field = RailsAdmin::config("Draft").edit.fields.find { |f| f.name == :notes }
       field.properties[:nullable?].should be true
       field.required?.should be false
 
       # draft.date is nullable in the schema but has an AR
       # validates_presence_of validation that makes it required
-      field = RailsAdmin::config("Draft").edit.fields.find{|f| f.name == :date}
+      field = RailsAdmin::config("Draft").edit.fields.find { |f| f.name == :date }
       field.properties[:nullable?].should be true
       field.required?.should be true
 
       # draft.round is nullable in the schema but has an AR
       # validates_numericality_of validation that makes it required
-      field = RailsAdmin::config("Draft").edit.fields.find{|f| f.name == :round}
+      field = RailsAdmin::config("Draft").edit.fields.find { |f| f.name == :round }
       field.properties[:nullable?].should be true
       field.required?.should be true
 
       # team.revenue is nullable in the schema but has an AR
       # validates_numericality_of validation that allows nil
-      field = RailsAdmin::config("Team").edit.fields.find{|f| f.name == :revenue}
+      field = RailsAdmin::config("Team").edit.fields.find { |f| f.name == :revenue }
       field.properties[:nullable?].should be true
       field.required?.should be false
     end
@@ -638,8 +638,8 @@ describe "RailsAdmin Config DSL Edit Section" do
   describe "CKEditor Support" do
 
     it "should start with CKEditor disabled" do
-       field = RailsAdmin::config("Draft").edit.fields.find{|f| f.name == :notes}
-       field.ckeditor.should be false
+      field = RailsAdmin::config("Draft").edit.fields.find { |f| f.name == :notes }
+      field.ckeditor.should be false
     end
 
     it "should add Javascript to enable CKEditor" do
@@ -665,6 +665,18 @@ describe "RailsAdmin Config DSL Edit Section" do
       end
       visit new_path(:model_name => "user")
       should have_selector("input#user_avatar")
+    end
+  end
+
+  describe 'Carrierwave Support' do
+    it 'should show a file upload field' do
+      RailsAdmin.config User do
+        edit do
+          field :cw_avatar_image
+        end
+      end
+      visit rails_admin_new_path(:model_name => 'user')
+      should have_selector('#user_cw_avatar_image.fileUploadField')
     end
   end
 
@@ -739,6 +751,155 @@ describe "RailsAdmin Config DSL Edit Section" do
       end
       visit new_path(:model_name => "team")
       should have_selector("input.color")
+    end
+  end
+
+  describe "Form builder configuration" do
+
+    it "should allow override of default" do
+      RailsAdmin.config do |config|
+        config.model Player do
+          edit do
+            field :name
+          end
+        end
+        config.model Team do
+          edit do
+            form_builder :form_for_edit
+            field :name
+          end
+        end
+        config.model Fan do
+          create do
+            form_builder :form_for_create
+            field :name
+          end
+          update do
+            form_builder :form_for_update
+            field :name
+          end
+        end
+        config.model League do
+          create do
+            form_builder :form_for_league_create
+            field :name
+          end
+          update do
+            field :name
+          end
+        end
+      end
+
+      RailsAdmin::Config.model(Player).create.form_builder.should be(:form_for)
+      RailsAdmin::Config.model(Player).update.form_builder.should be(:form_for)
+      RailsAdmin::Config.model(Player).edit.form_builder.should be(:form_for)
+
+      RailsAdmin::Config.model(Team).update.form_builder.should be(:form_for_edit)
+      RailsAdmin::Config.model(Team).create.form_builder.should be(:form_for_edit)
+      RailsAdmin::Config.model(Team).edit.form_builder.should be(:form_for_edit)
+
+      RailsAdmin::Config.model(Fan).create.form_builder.should be(:form_for_create)
+      RailsAdmin::Config.model(Fan).update.form_builder.should be(:form_for_update)
+      RailsAdmin::Config.model(Fan).edit.form_builder.should be(:form_for_update) # not sure we care
+
+      RailsAdmin::Config.model(League).create.form_builder.should be(:form_for_league_create)
+      RailsAdmin::Config.model(League).update.form_builder.should be(:form_for)
+      RailsAdmin::Config.model(League).edit.form_builder.should be(:form_for) # not sure we care
+
+      # don't spill over into other views
+      expect {
+        RailsAdmin::Config.model(Team).list.form_builder
+      }.to raise_error(NoMethodError, /undefined method/)
+    end
+
+    it "should be used in the new and edit views" do
+      TF_CREATE_OUTPUT = "MY TEST FORM CREATE TEXT FIELD"
+      TF_UPDATE_OUTPUT = "MY TEST FORM UPDATE TEXT FIELD"
+
+      module MyCreateForm
+        class Builder < ::ActionView::Helpers::FormBuilder
+          def text_field(*args)
+            TF_CREATE_OUTPUT
+          end
+        end
+
+        module ViewHelper
+          def create_form_for(*args, &block)
+            options = args.extract_options!.reverse_merge(:builder => MyCreateForm::Builder)
+            form_for(*(args << options), &block)
+          end
+        end
+      end
+
+      module MyUpdateForm
+        class Builder < ::ActionView::Helpers::FormBuilder
+          def text_field(*args)
+            TF_UPDATE_OUTPUT
+          end
+        end
+
+        module ViewHelper
+          def update_form_for(*args, &block)
+            options = args.extract_options!.reverse_merge(:builder => MyUpdateForm::Builder)
+            form_for(*(args << options), &block)
+          end
+        end
+      end
+
+      class ActionView::Base
+        include MyCreateForm::ViewHelper
+        include MyUpdateForm::ViewHelper
+      end
+
+      RailsAdmin.config do |config|
+        config.model Player do
+          edit do
+            field :name
+          end
+        end
+        config.model Team do
+          edit do
+            form_builder :create_form_for
+            field :name
+          end
+        end
+        config.model League do
+          create do
+            form_builder :create_form_for
+            field :name
+          end
+          update do
+            form_builder :update_form_for
+            field :name
+          end
+        end
+      end
+
+      visit rails_admin_new_path(:model_name => "player")
+      should have_selector("input#player_name")
+      should have_no_content(TF_CREATE_OUTPUT)
+      should have_no_content(TF_UPDATE_OUTPUT)
+      @player = FactoryGirl.create :player
+      visit rails_admin_edit_path(:model_name => "player", :id => @player.id)
+      should have_selector("input#player_name")
+      should have_no_content(TF_CREATE_OUTPUT)
+      should have_no_content(TF_UPDATE_OUTPUT)
+
+      visit rails_admin_new_path(:model_name => "team")
+      should have_content(TF_CREATE_OUTPUT)
+      should have_no_content(TF_UPDATE_OUTPUT)
+      @team = FactoryGirl.create :team
+      visit rails_admin_edit_path(:model_name => "team", :id => @team.id)
+      should have_content(TF_CREATE_OUTPUT)
+      should have_no_content(TF_UPDATE_OUTPUT)
+
+      visit rails_admin_new_path(:model_name => "league")
+      should have_content(TF_CREATE_OUTPUT)
+      should have_no_content(TF_UPDATE_OUTPUT)
+      @league = FactoryGirl.create :league
+      visit rails_admin_edit_path(:model_name => "league", :id => @league.id)
+      should have_no_content(TF_CREATE_OUTPUT)
+      should have_content(TF_UPDATE_OUTPUT)
     end
   end
 end
